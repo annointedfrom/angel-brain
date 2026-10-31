@@ -1,0 +1,11 @@
+# GPU training + export stack. Target: WSL2 Ubuntu, Python 3.12, NVIDIA GPU (tested on RTX 3070 8 GB).
+# Install unsloth first and let it resolve torch (needs torch >= 2.7; verified with 2.10.0+cu128).
+# System packages: sudo apt-get install -y build-essential cmake
+unsloth
+trl>=0.24
+peft
+datasets
+bitsandbytes
+accelerate
+# Eval + scoring scripts (score_run.py, assemble_dataset.py, make_public_release.py) are stdlib-only.
+# Tests: pip install pytest
