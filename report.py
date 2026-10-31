@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import sys
 from statistics import mean
 
@@ -30,6 +31,26 @@ for _s in (sys.stdout, sys.stderr):
         _s.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
+
+
+ABSTAIN = re.compile(r"don't have|do not have|not in (my )?memory|isn't in my memory|can't know|cannot know"
+                     r"|don't know|won't (guess|make it up)|notes don't cover", re.IGNORECASE)
+
+
+def abstain_rates(questions: dict[str, dict], qids: list[str], answer_files: list[str]) -> dict:
+    """How often the model says "not in memory" on answerable vs adversarial questions.
+
+    Abstaining on a non-adversarial question is over-refusal (the v3 failure); on the
+    adversarial set it is often the right call.
+    """
+    counts = {"answerable": [0, 0], "adversarial": [0, 0]}
+    for path in answer_files:
+        answers = {a["id"]: a.get("answer", "") for a in load_jsonl(path)}
+        for qid in qids:
+            bucket = "adversarial" if "adversarial" in questions[qid].get("tags", []) else "answerable"
+            counts[bucket][1] += 1
+            counts[bucket][0] += bool(ABSTAIN.search(answers.get(qid, "")))
+    return {k: round(a / n, 3) if n else 0.0 for k, (a, n) in counts.items()}
 
 
 def per_question_scores(questions: dict[str, dict], answer_files: list[str]) -> dict[str, list[int]]:
@@ -75,8 +96,11 @@ def paired_diff(qids: list[str], a: dict, b: dict, iters: int, seed: int) -> dic
 
 
 def build_report(questions: dict[str, dict], answers: list[str], compare: list[str] | None,
-                 tag: str | None, iters: int, seed: int) -> dict:
-    qids = [q for q, spec in questions.items() if not tag or tag in spec.get("tags", [])]
+                 tag: str | None, iters: int, seed: int, domain: str | None = None) -> dict:
+    qids = [q for q, spec in questions.items()
+            if (not tag or tag in spec.get("tags", [])) and (not domain or spec["domain"] == domain)]
+    if not qids:
+        raise ValueError(f"no questions match tag={tag!r} domain={domain!r}")
     a = per_question_scores(questions, answers)
     domains = sorted({questions[q]["domain"] for q in qids})
     report = {"tag": tag, "answers": answers,
@@ -87,6 +111,9 @@ def build_report(questions: dict[str, dict], answers: list[str], compare: list[s
         b = per_question_scores(questions, compare)
         report["compare"] = {"answers": compare, "overall": summarize(qids, b, iters, seed),
                              "diff_b_minus_a": paired_diff(qids, a, b, iters, seed)}
+    report["abstain"] = abstain_rates(questions, qids, answers)
+    if compare:
+        report["compare"]["abstain"] = abstain_rates(questions, qids, compare)
     report["always_fail"] = sorted(q for q in qids if not any(a[q]))
     return report
 
@@ -102,14 +129,18 @@ def main() -> None:
     ap.add_argument("--questions", default="eval_questions_v2.jsonl")
     ap.add_argument("--answers", nargs="+", required=True, help="Answers files for system A (one per run).")
     ap.add_argument("--compare", nargs="+", help="Answers files for system B (one per run).")
-    ap.add_argument("--tag", help="Only questions with this tag.")
+    ap.add_argument("--tag", help="Only questions with this tag (fact, voice, adversarial).")
+    ap.add_argument("--domain", help="Only questions in this domain (faith, coding, identity, ...).")
     ap.add_argument("--iters", type=int, default=5000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
     questions = {q["id"]: q for q in load_jsonl(args.questions)}
-    report = build_report(questions, args.answers, args.compare, args.tag, args.iters, args.seed)
+    try:
+        report = build_report(questions, args.answers, args.compare, args.tag, args.iters, args.seed, args.domain)
+    except ValueError as e:
+        sys.exit(str(e))
 
     if args.json:
         print(json.dumps(report, indent=2))
@@ -118,10 +149,13 @@ def main() -> None:
     print(f"  overall   {fmt(report['overall'])}")
     for d, s in report["by_domain"].items():
         print(f"  {d:<11} {fmt(s)}")
+    ab = report["abstain"]
+    print(f"  abstains  answerable {ab['answerable']:.0%} (over-refusal)  adversarial {ab['adversarial']:.0%}")
     if "compare" in report:
         c = report["compare"]
         d = c["diff_b_minus_a"]
         print(f"\n  B overall {fmt(c['overall'])}")
+        print(f"  B abstains answerable {c['abstain']['answerable']:.0%}  adversarial {c['abstain']['adversarial']:.0%}")
         print(f"  B - A     {d['diff']:+.1%}  [95% CI {d['ci95'][0]:+.1%} to {d['ci95'][1]:+.1%}]"
               f"  {'significant' if d['significant'] else 'not significant'}")
     if report["always_fail"]:

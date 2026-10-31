@@ -55,12 +55,13 @@ def load_questions(path: str, tag: str) -> list[dict]:
     return qs
 
 
-def compose_at(bv, query: str, memories: list[str], model: str, temperature: float) -> str:
+def compose_at(bv, query: str, memories: list[str], model: str, temperature: float,
+               system: str | None = None) -> str:
     """The real production path (brain_voice.compose via /api/chat). Temp 0 = reproducible
     gate; temp > 0 with --runs N measures run-to-run variance. Using /api/chat applies the
     cortex's template + stops, which is essential for an instruct cortex like angel-brain
     (raw /api/generate makes it ramble)."""
-    return bv.compose(query, memories, model, temperature=temperature)
+    return bv.compose(query, memories, model, temperature=temperature, system=system)
 
 
 def main() -> None:
@@ -71,8 +72,15 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=5, help="Memories to recall per question.")
     ap.add_argument("--temperature", type=float, default=0.0, help="0 = reproducible gate; >0 with --runs measures variance.")
     ap.add_argument("--runs", type=int, default=1, help="Repeat the whole set N times (one answers file per run).")
+    ap.add_argument("--system-prompt", help="File holding a system prompt to A/B against brain_voice's default.")
+    ap.add_argument("--label", help="Extra label for output files (e.g. the prompt variant).")
     ap.add_argument("--brain-voice-dir", default=DEFAULT_BV_DIR)
     args = ap.parse_args()
+
+    system = None
+    if args.system_prompt:
+        with open(args.system_prompt, encoding="utf-8") as f:
+            system = f.read().strip()
 
     bv = load_brain_voice(args.brain_voice_dir)
     questions = load_questions(args.questions, args.tag)
@@ -82,7 +90,7 @@ def main() -> None:
     # Recall is deterministic, so fetch it once and reuse it across runs.
     recalled = {q["id"]: bv.recall(q["question"], args.limit) for q in questions}
 
-    label = re.sub(r"[^A-Za-z0-9._-]+", "-", args.model)
+    label = re.sub(r"[^A-Za-z0-9._-]+", "-", args.model + (f"_{args.label}" if args.label else ""))
     suffix = "" if args.runs == 1 and args.temperature == 0 else f"_t{args.temperature:g}"
     out_paths = []
     for run in range(1, args.runs + 1):
@@ -96,7 +104,7 @@ def main() -> None:
                 start = time.perf_counter()
                 row = {"id": q["id"], "recalled": len(mems), "memories": mems}
                 try:
-                    row["answer"] = compose_at(bv, q["question"], mems, args.model, args.temperature)
+                    row["answer"] = compose_at(bv, q["question"], mems, args.model, args.temperature, system)
                 except SystemExit as e:  # brain_voice.compose exits on Ollama errors
                     errors += 1
                     row["answer"], row["error"] = "", str(e)

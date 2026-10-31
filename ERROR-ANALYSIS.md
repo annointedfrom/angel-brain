@@ -56,6 +56,29 @@ Examples, quoted from the model:
 - **The eval runner lost everything on one error.** `eval_system.py` now writes answers row by row and records per-question errors instead of exiting.
 - **One scoring spec was wrong.** v1 `coding-1` required the literal text `<type>`, so a correctly formatted example (`refactor: ...`) failed. It now also accepts a real conventional-commit prefix. The `test_v2_references_pass_their_own_specs` test guards against specs that are too strict.
 
+## Abstention experiments (2026-10-31)
+
+Goal: stop fabrication after a retrieval miss without new over-refusal. Every arm uses the same recalled memories, 121 questions, and 3 runs at t=0.7 unless marked "greedy". Deltas are paired against the deployed v2.
+
+| Arm | Change | Overall | B − A vs deployed (95% CI) | Over-refusal* | Adversarial |
+|---|---|---|---|---|---|
+| **A: v2, default prompt** (deployed) | none | **69%** | — | 0% | 67% |
+| B: v2 + abstention prompt | system prompt with grounding rules (`prompts/voice_v2_abstain.txt`) | 66% | −2.2 (−6.3, +1.7) | 0% | 67% |
+| C: v3, greedy | trained on grounded examples, answer as an exact standalone memory, abstain on every personal question, 8 epochs | 59% | **−9.1 (−18.2, −0.8)** | **31%** | 59% |
+| D: v4 | answer buried in note-like memories, abstain on ⅓ of personal questions, +40 general-knowledge examples, 5 epochs | 65% | −3.6 (−9.4, +2.5) | 3% | **88%** |
+
+\*Over-refusal is the share of non-adversarial answers containing "not in memory"-style phrases.
+
+What each arm showed:
+
+- **B: prompting alone doesn't move a 3B model.** Abstention phrases appeared in 0.3% of answers. Also, `brain_voice` sends its own system message, which **overrides the Modelfile SYSTEM**, so the persona rules in the Modelfile never reached the deployed model at inference.
+- **C: the classic over-correction.** With the answer always present as an exact memory, the model learned "copy an exact match, otherwise refuse." It then refused 31% of answerable questions, including 17 × 23 and the user's own stack.
+- **D: fixes the target failure and causes a new one.** Adversarial rose from 67% to 88% (unknowables, approval gates and commit types now pass), and over-refusal stayed at 3%. But workflow fell 19 points and faith 13, both significant. With no plain voice examples left, the model trusts whatever text is recalled: it copies raw note snippets, dumped a full Douay-Rheims passage on a charity question (degenerate, 1,414 characters), and answered a CLAUDE.md question from an Ollama gotcha note. Rules it used to hold in its weights now lose to noisy context.
+
+**Decision:** keep v2 deployed. No arm beats it overall with significance.
+
+**Next iteration (v5):** mix the original plain voice examples back in alongside D's grounded set, so rules live in the weights and grounding governs only personal facts. Keep D's abstention and general-knowledge parts. Ship only if overall is not worse and adversarial gains hold.
+
 ## Caveats
 
 - Scoring is regex-based, and grader agreement with human labels hasn't been measured yet. That's the next step: `calibrate_judge.py sample`, then hand-label 50 answers.

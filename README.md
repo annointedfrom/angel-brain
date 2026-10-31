@@ -99,6 +99,19 @@ The harness is the main artifact. Three independent gates:
 
 Run-to-run spread is 68–69%, and p50 latency is 2.6 s on an RTX 3070. [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md) sorts the 27 always-failing questions into categories. **52% are confident fabrication after a retrieval miss.** That makes abstention training and retrieval the next work.
 
+### Abstention experiments
+
+Paired against the deployed v2 on the same recalled memories:
+
+| Arm | Overall | Over-refusal | Adversarial |
+|---|---|---|---|
+| v2 (deployed) | 69% | 0% | 67% |
+| v2 + abstention prompt | 66% | 0% | 67% |
+| v3: exact-memory grounded data | 59% (significantly worse) | **31%** | 59% |
+| v4: buried-fact grounded data | 65% | 3% | **88%** |
+
+v4 fixes the targeted failure. But with no plain voice examples left, it over-trusts noisy recalled text: workflow and faith regress significantly. v2 stays deployed. Full write-up in [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md#abstention-experiments-2026-10-31).
+
 ### Honest caveats
 
 - The eval sets are small (18–21 items), hand-written, scored by regex, and run once. Treat single-question deltas as noise.

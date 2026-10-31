@@ -45,11 +45,29 @@ def test_report_tag_filter_and_domains(tmp_path):
     assert set(rep["by_domain"]) == {"x"}
 
 
+def test_report_domain_filter_and_empty_selection(tmp_path):
+    import pytest
+    runs = [write_answers(tmp_path, "r1.jsonl", {"c"})]
+    assert build_report(QUESTIONS, runs, None, None, 200, 0, domain="y")["overall"]["pass_rate"] == 1.0
+    with pytest.raises(ValueError):
+        build_report(QUESTIONS, runs, None, "identity", 200, 0)
+
+
 def test_paired_compare_detects_identical_systems(tmp_path):
     a = [write_answers(tmp_path, "a.jsonl", {"a"})]
     b = [write_answers(tmp_path, "b.jsonl", {"a"})]
     diff = build_report(QUESTIONS, a, b, None, iters=200, seed=0)["compare"]["diff_b_minus_a"]
     assert diff["diff"] == 0.0 and not diff["significant"]
+
+
+def test_abstain_rates_split_answerable_and_adversarial(tmp_path):
+    from report import abstain_rates
+    qs = {"a": {"id": "a", "domain": "x", "tags": ["fact"]},
+          "b": {"id": "b", "domain": "x", "tags": ["adversarial"]}}
+    path = tmp_path / "r.jsonl"
+    path.write_text(json.dumps({"id": "a", "answer": "I don't have that in memory."}) + "\n"
+                    + json.dumps({"id": "b", "answer": "Sure, here it is."}) + "\n", encoding="utf-8")
+    assert abstain_rates(qs, ["a", "b"], [str(path)]) == {"answerable": 1.0, "adversarial": 0.0}
 
 
 def test_kappa_perfect_and_chance():

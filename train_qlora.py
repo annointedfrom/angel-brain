@@ -52,10 +52,11 @@ def main() -> None:
         use_gradient_checkpointing="unsloth",
     )
 
+    from grounding import chat_messages
+
     def to_text(ex: dict) -> dict:
-        instr, inp, out = ex.get("instruction", ""), ex.get("input", ""), ex.get("output", "")
-        user = f"{instr}\n\n{inp}".strip() if inp else instr
-        msgs = [{"role": "user", "content": user}, {"role": "assistant", "content": out}]
+        # Grounded examples (with "memories"/"system") render in the exact serve-time format.
+        msgs = chat_messages(ex)
         # enable_thinking=False keeps the rendered assistant turn free of Qwen3's
         # <think> scaffold, matching how the model is queried at inference (eval_compare.py).
         try:

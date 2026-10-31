@@ -36,7 +36,11 @@ def normalize(rec: dict) -> dict | None:
     out = (rec.get("output") or rec.get("answer") or rec.get("text") or "").strip()
     if not instr or not out:
         return None
-    return {"instruction": instr, "input": (rec.get("input") or "").strip(), "output": out}
+    norm = {"instruction": instr, "input": (rec.get("input") or "").strip(), "output": out}
+    for key in ("memories", "system"):  # grounded examples (see grounding.py)
+        if key in rec:
+            norm[key] = rec[key]
+    return norm
 
 
 def norm_text(s: str) -> set[str]:
@@ -70,7 +74,9 @@ def main() -> None:
             n = normalize(rec)
             if not n:
                 continue
-            key = n["instruction"].lower()
+            # A grounded question appears twice (memory present -> answer, absent -> abstain),
+            # so the dedup key includes the target.
+            key = (n["instruction"] + "\x1f" + n["output"]).lower()
             if key in seen:
                 dropped_dup += 1
                 continue
