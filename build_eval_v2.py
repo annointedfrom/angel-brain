@@ -164,7 +164,9 @@ def main():
             train += [json.loads(l)["instruction"] for l in p.open(encoding="utf-8-sig") if l.strip()]
     train_sets = [norm_text(t) for t in train]
     leaks = []
-    for r in NEW:
+    if not train_sets:
+        print("no training files found; skipping the leakage check")
+    for r in NEW if train_sets else []:
         qs = norm_text(r["question"])
         best = max((jaccard(qs, t), i) for i, t in enumerate(train_sets))
         if best[0] >= 0.5:
