@@ -75,8 +75,9 @@ def main() -> None:
             if not n:
                 continue
             # A grounded question appears twice (memory present -> answer, absent -> abstain),
-            # so the dedup key includes the target.
-            key = (n["instruction"] + "\x1f" + n["output"]).lower()
+            # so the dedup key includes the target. A plain copy of a grounded example is a
+            # different training signal (answer from weights), so grounding is part of the key.
+            key = (n["instruction"] + "\x1f" + n["output"] + "\x1f" + str("memories" in n)).lower()
             if key in seen:
                 dropped_dup += 1
                 continue

@@ -66,6 +66,7 @@ Goal: stop fabrication after a retrieval miss without new over-refusal. Every ar
 | B: v2 + abstention prompt | system prompt with grounding rules (`prompts/voice_v2_abstain.txt`) | 66% | −2.2 (−6.3, +1.7) | 0% | 67% |
 | C: v3, greedy | trained on grounded examples, answer as an exact standalone memory, abstain on every personal question, 8 epochs | 59% | **−9.1 (−18.2, −0.8)** | **31%** | 59% |
 | D: v4 | answer buried in note-like memories, abstain on ⅓ of personal questions, +40 general-knowledge examples, 5 epochs | 65% | −3.6 (−9.4, +2.5) | 3% | **88%** |
+| E: v5 | D's 192 grounded examples + the 123 original plain voice examples, 5 epochs | 60% | **−8.8 (−16.3, −1.4)** | 3% | 78% |
 
 \*Over-refusal is the share of non-adversarial answers containing "not in memory"-style phrases.
 
@@ -75,9 +76,14 @@ What each arm showed:
 - **C: the classic over-correction.** With the answer always present as an exact memory, the model learned "copy an exact match, otherwise refuse." It then refused 31% of answerable questions, including 17 × 23 and the user's own stack.
 - **D: fixes the target failure and causes a new one.** Adversarial rose from 67% to 88% (unknowables, approval gates and commit types now pass), and over-refusal stayed at 3%. But workflow fell 19 points and faith 13, both significant. With no plain voice examples left, the model trusts whatever text is recalled: it copies raw note snippets, dumped a full Douay-Rheims passage on a charity question (degenerate, 1,414 characters), and answered a CLAUDE.md question from an Ollama gotcha note. Rules it used to hold in its weights now lose to noisy context.
 
-**Decision:** keep v2 deployed. No arm beats it overall with significance.
+- **E: mixing plain examples back in made it worse, not better.** Faith fell 22 points and workflow 16 (both significant); coding fell 17 (not significant); adversarial kept part of D's gain (78% vs 67%, not significant). The failures are a new kind: **memorized training answers fired by the wrong cue.** Asked a faith question with six Douay-Rheims chapters recalled, it answered with the "production-grade, SDLC order" rule. A coding question got the liturgical-calendar answer. Neither answer came from the recalled memories; both are verbatim training outputs. Final train loss was about 0.11, and every plain example's instruction and output also appear in its grounded twin, so each target was seen twice per epoch (effectively 10 epochs on 315 rows). The adapter overfit into a lookup table.
 
-**Next iteration (v5):** mix the original plain voice examples back in alongside D's grounded set, so rules live in the weights and grounding governs only personal facts. Keep D's abstention and general-knowledge parts. Ship only if overall is not worse and adversarial gains hold.
+**Decision:** keep v2 deployed. No arm beats it overall with significance, and v5 is significantly worse.
+
+**What v5 rules out and what's next:** more SFT epochs on duplicated targets is the wrong lever. Next options, cheapest first:
+1. Re-run E at 2 epochs and lr 1e-4, with plain and grounded copies split so no output appears twice. This tests the overfitting diagnosis directly.
+2. Leave the weights alone and fix the retrieval miss upstream (A3: recall@5, hybrid search, recall-confidence in the prompt). 52% of hard failures start with a retrieval miss.
+3. DPO with v2's fabrications as the rejected side, which targets abstention without new SFT targets to memorize.
 
 ## Caveats
 

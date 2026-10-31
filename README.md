@@ -109,8 +109,9 @@ Paired against the deployed v2 on the same recalled memories:
 | v2 + abstention prompt | 66% | 0% | 67% |
 | v3: exact-memory grounded data | 59% (significantly worse) | **31%** | 59% |
 | v4: buried-fact grounded data | 65% | 3% | **88%** |
+| v5: v4 + plain voice examples | 60% (significantly worse) | 3% | 78% |
 
-v4 fixes the targeted failure. But with no plain voice examples left, it over-trusts noisy recalled text: workflow and faith regress significantly. v2 stays deployed. Full write-up in [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md#abstention-experiments-2026-10-31).
+v4 fixes the targeted failure. But with no plain voice examples left, it over-trusts noisy recalled text: workflow and faith regress significantly. v5 put the plain examples back and overfit instead: it returns memorized training answers to the wrong questions. v2 stays deployed. Full write-up in [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md#abstention-experiments-2026-10-31).
 
 ### Honest caveats
 
