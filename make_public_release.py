@@ -21,12 +21,13 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 CODE_FILES = [
-    "README.md", "LICENSE", "requirements-train.txt", ".github/workflows/ci.yml",
+    "README.md", "ERROR-ANALYSIS.md", "LICENSE", "requirements-train.txt", ".github/workflows/ci.yml",
     "build_dataset.py", "assemble_dataset.py", "train_qlora.py",
     "eval_compare.py", "eval_system.py", "score_run.py", "council_judge.py",
     "export_gguf.py", "merge_16bit.py", "convert_gguf.sh", "sweep.ps1",
     "Modelfile.template", "make_public_release.py", "eval_questions.jsonl",
-    "tests/test_score_run.py", "tests/test_release.py",
+    "eval_questions_v2.jsonl", "build_eval_v2.py", "report.py", "calibrate_judge.py",
+    "tests/test_score_run.py", "tests/test_release.py", "tests/test_report.py",
 ]
 # Private-repo name -> published name.
 RENAMES = {"public.gitignore": ".gitignore"}

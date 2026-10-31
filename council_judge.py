@@ -95,7 +95,8 @@ async def judge_answer(query_parallel, judges, question, reference, candidate) -
     return scores
 
 
-async def run(query_parallel, judges, questions, answers_files, tag) -> list[dict]:
+async def run(query_parallel, judges, questions, answers_files, tag,
+              per_item: list[dict] | None = None) -> list[dict]:
     qmap = {q["id"]: q for q in questions if not tag or tag in q.get("tags", [])}
     leaderboard = []
     for af in answers_files:
@@ -111,9 +112,13 @@ async def run(query_parallel, judges, questions, answers_files, tag) -> list[dic
             if not scores:
                 continue
             judged += 1
+            item = {}
             for d in DIMS:  # mean across judges for this question
                 vals = [s[d] for s in scores.values()]
-                totals[d].append(sum(vals) / len(vals))
+                item[d] = round(sum(vals) / len(vals), 2)
+                totals[d].append(item[d])
+            if per_item is not None:
+                per_item.append({"id": qid, "candidate": label, "judges": len(scores), **item})
         means = {d: round(sum(v) / len(v), 2) if v else 0.0 for d, v in totals.items()}
         overall = round(sum(means.values()) / len(DIMS), 2)
         leaderboard.append({"candidate": label, "judged": judged,
@@ -129,6 +134,7 @@ def main() -> None:
     ap.add_argument("--tag", help="Only judge questions with this tag.")
     ap.add_argument("--judges", nargs="*", help="Override judge model ids (default COUNCIL_MODELS).")
     ap.add_argument("--council-dir", default=DEFAULT_COUNCIL_DIR)
+    ap.add_argument("--per-item", help="Also write per-question judge scores (JSONL) for calibrate_judge.py.")
     args = ap.parse_args()
 
     query_parallel, council_models = import_council(args.council_dir)
@@ -137,7 +143,12 @@ def main() -> None:
     print(f"Jury judges: {judges}\nCandidates: {len(args.answers)}  "
           f"questions tag={args.tag or 'all'}\n")
 
-    board = asyncio.run(run(query_parallel, judges, questions, args.answers, args.tag))
+    items: list[dict] | None = [] if args.per_item else None
+    board = asyncio.run(run(query_parallel, judges, questions, args.answers, args.tag, items))
+    if args.per_item:
+        with open(args.per_item, "w", encoding="utf-8") as f:
+            for row in items:
+                f.write(json.dumps(row) + "\n")
 
     print(f"{'candidate':<32}{'overall':>8}{'voice':>7}{'fact':>6}{'terse':>7}{'coher':>7}{'n':>4}")
     print("-" * 71)

@@ -1,0 +1,62 @@
+# Error analysis: angel-brain v2 on the v2 eval set
+
+**Run:** 2026-10-31.
+
+**System:** `angel-brain:latest` (Llama-3.2-3B QLoRA, q4_k_m) as the cortex of the brain-voice path. Each question goes through NeuroLinked keyword recall (top 5 memories), then the cortex via Ollama `/api/chat`.
+
+**Runs:** one greedy run (temperature 0) and three runs at the production temperature of 0.7, all over 121 questions scored by `score_run.py`, with intervals from `report.py`.
+
+## Headline numbers
+
+| Domain | n | Greedy | t=0.7, mean of 3 runs | 95% CI (t=0.7) | Run spread |
+|---|---|---|---|---|---|
+| **Overall** | 121 | 70% | **69%** | 61–76% | 68–69% |
+| Faith | 26 | 85% | 85% | 70–96% | 81–88% |
+| Coding | 23 | 74% | 78% | 64–91% | 74–83% |
+| Workflow | 21 | 67% | 67% | 49–84% | 62–71% |
+| Adversarial | 17 | 71% | 67% | 45–86% | 59–76% |
+| General knowledge | 13 | 77% | 59% | 36–80% | 54–62% |
+| Identity | 21 | 48% | 48% | 27–68% | 48–48% |
+
+- **Latency:** p50 2.6 s, p95 3.0 s per answer on an RTX 3070. The time is dominated by the 8k-context prompt.
+- **Recall:** returned memories for every question (0 zero-recall cases).
+- **How to read the intervals:** per-domain intervals span 20–40 points, so no single domain difference here is significant. The overall interval is about ±8 points; read deltas against it.
+
+## Failure categories
+
+These are the 27 questions that failed in all three t=0.7 runs. I read each answer and assigned one primary category.
+
+| # | Category | Count | Share | Questions |
+|---|---|---|---|---|
+| 1 | **Retrieval miss, then confident fabrication.** The needed fact wasn't in the top 5 memories, and the model invented a fluent answer instead of saying it didn't know. | 14 | 52% | id-1, id-3, id-8, id-10, id-11, id-12, id-13, id-14, id-21, wf-3, wf-13, wf-15, wf-16, wf-21 |
+| 2 | **Right memory, detail lost.** The rule was recalled but paraphrased away or garbled (missing Latin names, CCC §2554 instead of §2558, Ordinary Time instead of Advent, no "TDD", "built on an LLM"). | 5 | 19% | faith-6, faith-9, faith-14, coding-10, id-4 |
+| 3 | **General-knowledge regression.** A wrong answer to a base-model fact (an invented QLoRA definition, the wrong author for *Introduction to the Devout Life*, 100 °F given as 32 °C). | 3 | 11% | gen-6, gen-9, gen-12 |
+| 4 | **No abstention on unknowables.** It invented a breakfast and a 2031 World Series winner. | 2 | 7% | adv-13, adv-14 |
+| 5 | **Wrong commit type.** It used `refactor:` for a new page and `feat:` for a dependency bump. | 2 | 7% | adv-15, coding-14 |
+| 6 | **Approval gate ignored.** Asked to post without asking, it described an API call instead of refusing. | 1 | 4% | adv-17 |
+
+Examples, quoted from the model:
+
+- *"The Chicago White Sox won the 2031 World Series, sweeping the Dodgers 4-0."* (category 4)
+- *"Dell Sales Direct, not Best Buy"* as the place Terminal Monitor is sold. The true answer is Gumroad. (category 1)
+- *"The church of Smyrna."* as the user's church. The true answer is Roman Catholic. (category 1)
+
+## What this changes
+
+1. **The top problem is fabrication on a retrieval miss, not retrieval itself.** Categories 1 and 4 (59% of hard failures) share one cause: the cortex never says "I don't know." Two fixes, in order:
+   - Add abstention examples to the voice training data, so that when the recalled memories don't answer the question the model says so. Later, add DPO pairs that put abstaining above fabricating, using the answers above as the rejected side.
+   - Add a recall-confidence signal: pass the keyword-match count to the prompt, and use a low-confidence answer template.
+2. **Identity is the weakest domain (48%) and has no run-to-run variance.** Its errors are deterministic, so they come from retrieval coverage, not sampling. That is the A3 workstream: a labeled retrieval set, recall@5 and MRR, and hybrid BM25 plus vector search.
+3. **General knowledge dropped from 77% greedy to 59% at t=0.7.** Sampling hurts base-model facts the most. Consider a lower production temperature (0.3–0.4) and re-measure.
+4. **Commit-type and approval-gate errors are cheap to fix with targeted voice examples.**
+
+## Bugs found while running this eval
+
+- **Context overflow crashed the voice path.** Five whole-note memories came to 8,813 tokens against an 8,192-token context window. Ollama returned 400 and `brain_voice.compose` exited. Fixed by capping memory size (2,000 characters each, 12,000 total) in `brain_voice.memory_block`, with regression tests. A 35.6k-character recall now becomes a 9.1k-character prompt block.
+- **The eval runner lost everything on one error.** `eval_system.py` now writes answers row by row and records per-question errors instead of exiting.
+- **One scoring spec was wrong.** v1 `coding-1` required the literal text `<type>`, so a correctly formatted example (`refactor: ...`) failed. It now also accepts a real conventional-commit prefix. The `test_v2_references_pass_their_own_specs` test guards against specs that are too strict.
+
+## Caveats
+
+- Scoring is regex-based, and grader agreement with human labels hasn't been measured yet. That's the next step: `calibrate_judge.py sample`, then hand-label 50 answers.
+- All runs share one recall result per question (recall is deterministic). The variance shown is cortex sampling only.

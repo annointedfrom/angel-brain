@@ -53,7 +53,29 @@ The harness is the main artifact. Three independent gates:
 | System facts | `eval_system.py` | Facts through the **real** production retrieval path at temperature 0 |
 | Jury (secondary) | `council_judge.py` | Multi-model judge panel. A corroborating signal only, not the gate. |
 
-`eval_questions.jsonl` holds 21 held-out questions, paraphrased so they don't match the training data, each with its own scoring spec.
+`eval_questions.jsonl` holds the original 21 held-out questions, paraphrased so they don't match the training data, each with its own scoring spec.
+
+**v2 eval set** (`eval_questions_v2.jsonl`, built by `build_eval_v2.py`) has 121 questions across six domains:
+
+| Domain | Count |
+|---|---|
+| Faith | 26 |
+| Coding | 23 |
+| Identity | 21 |
+| Workflow | 21 |
+| Adversarial | 17 |
+| General knowledge | 13 |
+
+- **Adversarial** questions cover prompt injection, unsafe requests, policy violations and unknowable questions.
+- **General knowledge** questions check the fine-tune didn't erase base ability.
+- **Leakage guard:** every new question has Jaccard similarity below 0.5 with every training instruction.
+- **Spec check:** a test confirms each reference answer passes its own scoring spec, which catches specs that are too strict.
+
+| Tool | Purpose |
+|---|---|
+| `eval_system.py --tag all --runs 3 --temperature 0.7` | Repeated runs at the production temperature. Each answer records recalled memories and latency for error analysis. |
+| `report.py` | Mean pass rate, run spread, and a 95% bootstrap CI that resamples questions. With `--compare`, a paired B−A difference with its own CI. |
+| `calibrate_judge.py sample / score` | Builds a human-labeling sheet, then measures agreement (Cohen's kappa) between your labels and both the regex gate and the council jury (`council_judge.py --per-item`). A grader is trusted for gating only at kappa ≥ 0.6. |
 
 ### Results
 
@@ -62,6 +84,20 @@ The harness is the main artifact. Three independent gates:
 | Voice (raw adapter vs base, 21 Qs) | base 0/21 | adapter 13/21 | Mechanical gate |
 | System fact eval (18 Qs) after a retrieval fix | 3/18 | 10/18 | Search was AND-style, so 3+ keywords returned 0 hits; fixed with per-keyword OR-merge and match-count ranking |
 | Cortex (retrieval + model, 18 Qs) | nemotron-3-nano:4b 10/18 | angel-brain v1 11–12/18, v2 13/18 | v2 is trained on 128 curated examples. **One-question differences are within noise.** |
+
+### v2 results (121 questions, 3 runs at t=0.7)
+
+| Domain | Pass rate | 95% CI |
+|---|---|---|
+| **Overall** | **69%** | 61–76% |
+| Faith | 85% | 70–96% |
+| Coding | 78% | 64–91% |
+| Workflow | 67% | 49–84% |
+| Adversarial | 67% | 45–86% |
+| General | 59% | 36–80% |
+| Identity | 48% | 27–68% |
+
+Run-to-run spread is 68–69%, and p50 latency is 2.6 s on an RTX 3070. [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md) sorts the 27 always-failing questions into categories. **52% are confident fabrication after a retrieval miss.** That makes abstention training and retrieval the next work.
 
 ### Honest caveats
 
@@ -87,7 +123,8 @@ Tests (CPU only, stdlib + pytest): `python -m pytest tests`
 
 ## Roadmap
 
-- Grow the eval set to 120+ items with adversarial cases; repeat runs and report confidence intervals; calibrate the jury against hand labels.
+- Hand-label 50 answers and publish grader agreement (kappa) for the regex gate and the jury.
+- Teach abstention ("the memories don't cover that"), then DPO with the fabricated answers as the rejected side.
 - Retrieval metrics (recall@5, MRR) and a keyword vs vector vs hybrid (RRF) comparison.
 - Experiment tracking, a larger voice dataset (300–500 items), and a DPO pass on real failure pairs.
 - CI, tracing on the serving path, and a quantization quality-vs-speed table.
