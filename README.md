@@ -113,6 +113,19 @@ Paired against the deployed v2 on the same recalled memories:
 
 v4 fixes the targeted failure. But with no plain voice examples left, it over-trusts noisy recalled text: workflow and faith regress significantly. v5 put the plain examples back and overfit instead: it returns memorized training answers to the wrong questions. v2 stays deployed. Full write-up in [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md#abstention-experiments-2026-10-31).
 
+### Retrieval A/B
+
+There are 87 answerable personal questions, scored against silver relevance labels. To build them, every arm's top 10 was pooled and judged by a local 8B model, gated on answer terms. A spot check put precision at 14/20 clean.
+
+| Retriever | hit@5 | MRR@10 | Δ hit@5 vs production |
+|---|---|---|---|
+| production (keyword OR-merge) | 0.70 | 0.56 | — |
+| bm25 | 0.79 | 0.61 | +0.09 (n.s.) |
+| **vector (qwen3-embedding)** | **0.94** | **0.81** | **+0.24 (+0.14, +0.34)** |
+| hybrid (RRF) | 0.89 | 0.73 | +0.18 (+0.08, +0.29) |
+
+The vector lead holds on the 75 questions with discriminating answer specs. The catch is cost: a query embedding takes about 2.1 s and 4.8 GB of VRAM on the same GPU as the cortex. Details, the all-arm misses and the caveats are in [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md#retrieval-ab-a3-2026-10-31).
+
 ### Honest caveats
 
 - The eval sets are small (18–21 items), hand-written, scored by regex, and run once. Treat single-question deltas as noise.
@@ -139,7 +152,7 @@ Tests (CPU only, stdlib + pytest): `python -m pytest tests`
 
 - Hand-label 50 answers and publish grader agreement (kappa) for the regex gate and the jury.
 - Teach abstention ("the memories don't cover that"), then DPO with the fabricated answers as the rejected side.
-- Retrieval metrics (recall@5, MRR) and a keyword vs vector vs hybrid (RRF) comparison.
+- ~~Retrieval metrics and a keyword vs vector vs hybrid comparison~~ (done). Next: wire the vector retriever into the system eval, and try a smaller embedder for latency.
 - Experiment tracking, a larger voice dataset (300–500 items), and a DPO pass on real failure pairs.
 - CI, tracing on the serving path, and a quantization quality-vs-speed table.
 

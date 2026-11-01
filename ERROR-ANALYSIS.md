@@ -85,6 +85,38 @@ What each arm showed:
 2. Leave the weights alone and fix the retrieval miss upstream (A3: recall@5, hybrid search, recall-confidence in the prompt). 52% of hard failures start with a retrieval miss.
 3. DPO with v2's fabrications as the rejected side, which targets abstention without new SFT targets to memorize.
 
+## Retrieval A/B (A3, 2026-10-31)
+
+52% of hard failures start with a retrieval miss, so this tests the retriever on its own. Four arms run against one frozen snapshot of the knowledge DB (25,759 active memories):
+- **production:** the live keyword OR-merge. The offline replica matches live recall on 60/60 ids across 12 questions.
+- **bm25:** one FTS5 OR query ranked by `bm25()`.
+- **vector:** qwen3-embedding cosine, with an instruction prefix on queries only.
+- **hybrid:** RRF (k=60) of bm25 and vector.
+
+**Labels are silver.** For each of the 91 answerable personal questions, I pooled every arm's top 10 (2,325 pairs). A local qwen3:8b judge marked each pair relevant or not. A pair counted only if the judge said yes **and** the memory contains the question's required answer terms.
+
+Spot check of 20 random positives: 14 clean, 3 borderline, 3 wrong. All 3 wrong ones belong to questions whose answer spec is empty or generic (a bare negation, "vault", no terms at all). The robustness row drops those 12 questions.
+
+| Arm | hit@5 | MRR@10 | recall@5 | Δ hit@5 vs production |
+|---|---|---|---|---|
+| production | 0.70 | 0.56 | 0.24 | — |
+| bm25 | 0.79 | 0.61 | 0.31 | +0.09 (−0.01, +0.21) |
+| **vector** | **0.94** | **0.81** | **0.51** | **+0.24 (+0.14, +0.34)** |
+| hybrid | 0.89 | 0.73 | 0.44 | +0.18 (+0.08, +0.29) |
+| *robustness, n=75: vector* | 0.93 | 0.79 | 0.53 | +0.25 (+0.13, +0.37) |
+
+n=87, paired bootstrap 95% CIs. Reproduce the per-domain tables with `score_retrieval.py`; the snapshot and labels stay private.
+
+- **Vector wins, and the win holds on the strict subset.** A lenient judge would favor the on-topic memories that embeddings return. If that were the source of the lead, it would shrink once the weak specs are dropped. It doesn't.
+- **Hybrid lands below vector.** The keyword side drags it down most on coding, where bm25 is worst (0.61 hit@5). The FTS OR query rewards notes that repeat "code" or "file" over the rule card that answers the question.
+- **Identity gains the most:** production goes from 0.44 to 0.89 hit@5. These are the short questions ("Which church do I belong to?") where keyword AND-search fails.
+- **Category-1 slice (n=10, underpowered):** production hits 0.30, vector 0.80, hybrid 1.00. The direction is clear, but the gap between vector and hybrid on 10 questions isn't evidence of anything.
+- **4 questions are all-arm misses, not ingest gaps:** id-10, id-12, id-13 and wf-16. The facts are stored (for example, 7 memories mention Terminal Monitor and Gumroad), but no arm ranks them in its top 10 under the 22k SocialHub/Spector log rows. They're excluded, so every arm's absolute score is inflated by the same amount.
+- **recall@5 is capped.** Questions average 5.7 relevant memories, so compare that column across arms, not against 1.0.
+- **Serving cost:** a query embedding takes about 2.1 s warm (7 s cold) and 4.8 GB of VRAM. That's comparable to the whole 2.6 s p50 cortex answer, on the same 8 GB GPU, so Ollama will swap models. A smaller embedder (qwen3-embedding 0.6B) is the obvious next measurement before vector replaces production.
+
+**Next:** plug the vector arm into `eval_system.py` behind a retriever flag, then re-run the cortex eval. Retrieval hit@5 only matters if it moves answer accuracy.
+
 ## Caveats
 
 - Scoring is regex-based, and grader agreement with human labels hasn't been measured yet. That's the next step: `calibrate_judge.py sample`, then hand-label 50 answers.

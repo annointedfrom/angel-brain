@@ -28,7 +28,10 @@ CODE_FILES = [
     "Modelfile.template", "make_public_release.py", "eval_questions.jsonl",
     "eval_questions_v2.jsonl", "build_eval_v2.py", "report.py", "calibrate_judge.py",
     "grounding.py", "build_grounded_dataset.py", "quantize_gguf.sh", "prompts/voice_v2_abstain.txt",
+    "embed_corpus.py", "retrieval_metrics.py", "retrieval_arms.py", "label_retrieval.py",
+    "score_retrieval.py",
     "tests/test_score_run.py", "tests/test_release.py", "tests/test_report.py", "tests/test_grounding.py",
+    "tests/test_retrieval_metrics.py", "tests/test_retrieval_arms.py",
 ]
 # Private-repo name -> published name.
 RENAMES = {"public.gitignore": ".gitignore"}
