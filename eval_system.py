@@ -12,6 +12,10 @@ reuses the identical prompt. The only deliberate divergence is temperature=0 (gr
 so the gate is reproducible -- brain_voice's live path uses 0.7. Does NOT speak or
 write back to the brain (no TTS, no /observe pollution).
 
+--retriever swaps the recall step for a retrieval_arms.py arm over a frozen knowledge-DB
+snapshot (--db), so a retriever A/B changes nothing but the memories the cortex sees.
+"live" (default) is brain_voice.recall against the running brain.
+
 Emits answers_system_<model>.jsonl of {id, answer} for score_run.py / council_judge.py.
 """
 from __future__ import annotations
@@ -55,6 +59,30 @@ def load_questions(path: str, tag: str) -> list[dict]:
     return qs
 
 
+RETRIEVERS = ("live", "production", "bm25", "vector", "hybrid")
+
+
+def make_recall(bv, retriever: str, db: str | None = None, vectors: str | None = None):
+    """Return recall(query, limit) -> list[str] for the chosen retriever."""
+    if retriever == "live":
+        return bv.recall
+    if not db:
+        sys.exit(f"--retriever {retriever} needs --db (a knowledge-DB snapshot).")
+    from retrieval_arms import Snapshot, bm25_arm, hybrid_arm, production_arm, vector_arm
+    snap = Snapshot(db)
+    if retriever == "production":
+        arm = production_arm(snap, bv)
+    elif retriever == "bm25":
+        arm = bm25_arm(snap, bv)
+    else:
+        if not vectors:
+            sys.exit(f"--retriever {retriever} needs --vectors (embed_corpus.py output prefix).")
+        arm = vector_arm(snap, vectors)
+        if retriever == "hybrid":
+            arm = hybrid_arm(bm25_arm(snap, bv), arm)
+    return lambda query, limit: [snap.text(i) for i in arm(query, limit)]
+
+
 def compose_at(bv, query: str, memories: list[str], model: str, temperature: float,
                system: str | None = None) -> str:
     """The real production path (brain_voice.compose via /api/chat). Temp 0 = reproducible
@@ -75,6 +103,9 @@ def main() -> None:
     ap.add_argument("--system-prompt", help="File holding a system prompt to A/B against brain_voice's default.")
     ap.add_argument("--label", help="Extra label for output files (e.g. the prompt variant).")
     ap.add_argument("--brain-voice-dir", default=DEFAULT_BV_DIR)
+    ap.add_argument("--retriever", choices=RETRIEVERS, default="live")
+    ap.add_argument("--db", help="Knowledge-DB snapshot for a non-live retriever.")
+    ap.add_argument("--vectors", help="embed_corpus.py output prefix for vector/hybrid.")
     args = ap.parse_args()
 
     system = None
@@ -85,12 +116,20 @@ def main() -> None:
     bv = load_brain_voice(args.brain_voice_dir)
     questions = load_questions(args.questions, args.tag)
     print(f"System eval :: model={args.model}  questions={len(questions)} [tag={args.tag}]"
-          f"  temp={args.temperature}  runs={args.runs}\n")
+          f"  temp={args.temperature}  runs={args.runs}  retriever={args.retriever}\n")
 
     # Recall is deterministic, so fetch it once and reuse it across runs.
-    recalled = {q["id"]: bv.recall(q["question"], args.limit) for q in questions}
+    recall = make_recall(bv, args.retriever, args.db, args.vectors)
+    recalled, recall_s = {}, {}
+    for q in questions:
+        start = time.perf_counter()
+        recalled[q["id"]] = recall(q["question"], args.limit)
+        recall_s[q["id"]] = round(time.perf_counter() - start, 2)
 
-    label = re.sub(r"[^A-Za-z0-9._-]+", "-", args.model + (f"_{args.label}" if args.label else ""))
+    tag = args.label or ""
+    if args.retriever != "live":
+        tag = f"{tag}_{args.retriever}" if tag else args.retriever
+    label = re.sub(r"[^A-Za-z0-9._-]+", "-", args.model + (f"_{tag}" if tag else ""))
     suffix = "" if args.runs == 1 and args.temperature == 0 else f"_t{args.temperature:g}"
     out_paths = []
     for run in range(1, args.runs + 1):
@@ -102,7 +141,8 @@ def main() -> None:
             for q in questions:
                 mems = recalled[q["id"]]
                 start = time.perf_counter()
-                row = {"id": q["id"], "recalled": len(mems), "memories": mems}
+                row = {"id": q["id"], "recalled": len(mems), "memories": mems,
+                       "recall_s": recall_s[q["id"]]}
                 try:
                     row["answer"] = compose_at(bv, q["question"], mems, args.model, args.temperature, system)
                 except SystemExit as e:  # brain_voice.compose exits on Ollama errors

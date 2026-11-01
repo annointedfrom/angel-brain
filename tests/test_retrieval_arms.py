@@ -85,3 +85,18 @@ def test_relevance_needs_judge_yes_and_the_answer_terms():
     assert is_relevant(False, mem, ["80"]) is False
     assert is_relevant(None, mem, []) is False
     assert is_relevant(True, mem, []) is True  # no spec terms: the judge alone decides
+
+
+def test_eval_system_snapshot_recall_returns_memory_texts(tmp_path):
+    from eval_system import make_recall
+    _snapshot(tmp_path, [("bible translation rule: NAB", "vault-rules", "active"),
+                         ("unrelated note", "socialhub", "active")])
+    recall = make_recall(_fake_bv(), "production", db=str(tmp_path / "k.db"))
+    assert recall("What bible translation do I use?", 5) == ["bible translation rule: NAB"]
+
+
+def test_eval_system_live_recall_is_brain_voice(tmp_path):
+    from eval_system import make_recall
+    bv = _fake_bv()
+    bv.recall = lambda q, k: ["live"]
+    assert make_recall(bv, "live") is bv.recall

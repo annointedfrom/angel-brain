@@ -115,7 +115,26 @@ n=87, paired bootstrap 95% CIs. Reproduce the per-domain tables with `score_retr
 - **recall@5 is capped.** Questions average 5.7 relevant memories, so compare that column across arms, not against 1.0.
 - **Serving cost:** a query embedding takes about 2.1 s warm (7 s cold) and 4.8 GB of VRAM. That's comparable to the whole 2.6 s p50 cortex answer, on the same 8 GB GPU, so Ollama will swap models. A smaller embedder (qwen3-embedding 0.6B) is the obvious next measurement before vector replaces production.
 
-**Next:** plug the vector arm into `eval_system.py` behind a retriever flag, then re-run the cortex eval. Retrieval hit@5 only matters if it moves answer accuracy.
+### Does better retrieval move answers? (2026-11-01)
+
+Yes. Setup: the deployed v2 cortex on all 121 questions, 3 runs at t=0.7. `eval_system.py --retriever` switches the source of recalled memories, and both arms read the same snapshot, so the memories are the only thing that changes.
+
+| Domain | production recall | vector recall | Δ (paired 95% CI) |
+|---|---|---|---|
+| **overall** | 68% | **75%** | **+6.6 (+0.3, +13.2), significant** |
+| identity | 46% | 70% | **+23.8 (+7.9, +41.3), significant** |
+| coding | 77% | 84% | +7.2 (n.s.) |
+| workflow | 65% | 71% | +6.3 (n.s.) |
+| faith | 85% | 87% | +2.6 (n.s.) |
+| general | 56% | 59% | +2.6 (n.s.) |
+| adversarial | 71% | 65% | −5.9 (n.s.) |
+
+- **Always-failing questions drop from 28 to 20.** Fixed: id-3, id-4, id-8, id-9, id-14, id-21, wf-11, wf-15, coding-10, faith-9, faith-22, gen-8 and adv-14. Six of these are category-1 retrieval misses. Newly failing: adv-12, adv-17, faith-21, gen-12 and wf-3.
+- **Adversarial slips, though not significantly.** Vector search always returns something on-topic, and the cortex treats it as evidence for a false premise. Keyword search returned nothing for those questions, which made it easier for the cortex to decline. Retrieval-confidence (a similarity floor, or a "no strong match" note in the prompt) is the matching fix.
+- **The four all-arm misses still fail** (id-10, id-12, id-13 and wf-16). Their facts are buried under SocialHub/Terminal Monitor status logs, for example "Terminal Monitor auto-sync: 45 ports…". Down-weighting or excluding auto-generated log sources is the next retrieval change.
+- **Latency:** recall p50 goes from ~0 s to 2.2 s. The cortex itself stays at 2.6 s, because the eval embeds every question up front. Live serving alternates the embedder and the cortex on one 8 GB GPU, so it will pay model-swap time on top.
+
+**Decision:** vector retrieval is the better default on quality. Before switching brain_voice over, (1) measure a smaller embedder, (2) add the retrieval-confidence floor for false premises, and (3) filter log sources. Then re-run this eval.
 
 ## Caveats
 

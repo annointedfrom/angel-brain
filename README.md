@@ -124,7 +124,7 @@ There are 87 answerable personal questions, scored against silver relevance labe
 | **vector (qwen3-embedding)** | **0.94** | **0.81** | **+0.24 (+0.14, +0.34)** |
 | hybrid (RRF) | 0.89 | 0.73 | +0.18 (+0.08, +0.29) |
 
-The vector lead holds on the 75 questions with discriminating answer specs. The catch is cost: a query embedding takes about 2.1 s and 4.8 GB of VRAM on the same GPU as the cortex. Details, the all-arm misses and the caveats are in [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md#retrieval-ab-a3-2026-10-31).
+The vector lead holds on the 75 questions with discriminating answer specs. **It carries through to answers:** with the same v2 cortex, swapping in vector retrieval lifts the full 121-question system eval from **68% to 75% (+6.6, significant)**. Identity gains +24 and always-failing questions drop from 28 to 20; adversarial slips 6 pts (n.s.). The catch is cost: a query embedding takes about 2.1 s and 4.8 GB of VRAM on the same GPU as the cortex. Details, the all-arm misses and the caveats are in [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md#retrieval-ab-a3-2026-10-31).
 
 ### Honest caveats
 
@@ -152,7 +152,7 @@ Tests (CPU only, stdlib + pytest): `python -m pytest tests`
 
 - Hand-label 50 answers and publish grader agreement (kappa) for the regex gate and the jury.
 - Teach abstention ("the memories don't cover that"), then DPO with the fabricated answers as the rejected side.
-- ~~Retrieval metrics and a keyword vs vector vs hybrid comparison~~ (done). Next: wire the vector retriever into the system eval, and try a smaller embedder for latency.
+- ~~Retrieval metrics and a keyword vs vector vs hybrid comparison~~ (done). System eval with vector recall: 68% to 75%. Next: smaller embedder, a retrieval-confidence floor for false premises, and filtering of log sources.
 - Experiment tracking, a larger voice dataset (300–500 items), and a DPO pass on real failure pairs.
 - CI, tracing on the serving path, and a quantization quality-vs-speed table.
 
