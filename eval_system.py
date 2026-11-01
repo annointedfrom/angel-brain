@@ -59,7 +59,7 @@ def load_questions(path: str, tag: str) -> list[dict]:
     return qs
 
 
-RETRIEVERS = ("live", "production", "bm25", "vector", "hybrid")
+RETRIEVERS = ("live", "production", "bm25", "vector", "vector-nolog", "vector-downlog", "hybrid")
 
 
 def make_recall(bv, retriever: str, db: str | None = None, vectors: str | None = None):
@@ -68,18 +68,11 @@ def make_recall(bv, retriever: str, db: str | None = None, vectors: str | None =
         return bv.recall
     if not db:
         sys.exit(f"--retriever {retriever} needs --db (a knowledge-DB snapshot).")
-    from retrieval_arms import Snapshot, bm25_arm, hybrid_arm, production_arm, vector_arm
+    if retriever not in ("production", "bm25") and not vectors:
+        sys.exit(f"--retriever {retriever} needs --vectors (embed_corpus.py output prefix).")
+    from retrieval_arms import Snapshot, build_arms
     snap = Snapshot(db)
-    if retriever == "production":
-        arm = production_arm(snap, bv)
-    elif retriever == "bm25":
-        arm = bm25_arm(snap, bv)
-    else:
-        if not vectors:
-            sys.exit(f"--retriever {retriever} needs --vectors (embed_corpus.py output prefix).")
-        arm = vector_arm(snap, vectors)
-        if retriever == "hybrid":
-            arm = hybrid_arm(bm25_arm(snap, bv), arm)
+    arm = build_arms(snap, bv, vectors)[retriever]
     return lambda query, limit: [snap.text(i) for i in arm(query, limit)]
 
 

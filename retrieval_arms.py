@@ -9,10 +9,13 @@ of them can be swapped into the serving path or eval_system.py.
               plus a bonus for curated sources
   bm25        one FTS5 query with the keywords OR-ed, ranked by bm25()
   vector      cosine similarity over Ollama embeddings (embed_corpus.py)
+  vector-nolog    vector with the automated log sources dropped
+  vector-downlog  vector with log sources' cosine lowered by LOG_PENALTY
   hybrid      reciprocal-rank fusion of bm25 and vector
 """
 from __future__ import annotations
 
+import functools
 import json
 import re
 import sqlite3
@@ -103,31 +106,59 @@ def bm25_arm(snap: Snapshot, bv) -> Retriever:
     return retrieve
 
 
-def embed_query(text: str, model: str, url: str = "http://localhost:11434") -> list[float]:
+@functools.lru_cache(maxsize=512)  # the vector arms share one embedding per query
+def embed_query(text: str, model: str, url: str = "http://localhost:11434") -> tuple[float, ...]:
     body = {"model": model, "input": [QUERY_INSTRUCTION + text], "options": {"num_ctx": 512}}
     req = urllib.request.Request(f"{url}/api/embed", data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as r:
-        return json.loads(r.read())["embeddings"][0]
+        return tuple(json.loads(r.read())["embeddings"][0])
+
+
+_LOG_SOURCES = frozenset({"spector", "post-analysis", "terminal-monitor", "tiktok-enrich",
+                          "brain-intelligence", "brain-intelligence-digest"})
+
+# Fixed before scoring, not tuned on the eval: 87 labeled queries are too few to tune on.
+LOG_PENALTY = 0.05
+
+
+def is_log_source(source: str) -> bool:
+    """High-volume automated feeds (agent/scanner logs), ~85% of the snapshot. Fact
+    memories come from curated and vault sources, which these bury by sheer count."""
+    return source.startswith("socialhub") or source in _LOG_SOURCES
+
+
+@functools.lru_cache(maxsize=2)  # ~420 MB as float32; load once for all vector arms
+def _load_vectors(prefix: str):
+    import numpy as np
+
+    mat = np.load(prefix + ".npy").astype(np.float32)
+    with open(prefix + ".ids.json", encoding="utf-8") as f:
+        return mat, json.load(f)
 
 
 def vector_arm(snap: Snapshot, vectors_prefix: str, model: str = "qwen3-embedding",
-               exclude: frozenset[str] = frozenset({"brain_voice"})) -> Retriever:
+               exclude: frozenset[str] = frozenset({"brain_voice"}),
+               log_penalty: float = 0.0) -> Retriever:
+    """log_penalty is subtracted from the cosine of log-source memories; inf drops them."""
     import numpy as np  # only the vector arm needs numpy
 
-    mat = np.load(vectors_prefix + ".npy").astype(np.float32)
-    with open(vectors_prefix + ".ids.json", encoding="utf-8") as f:
-        ids = json.load(f)
+    mat, ids = _load_vectors(vectors_prefix)
     keep = np.array([snap.source.get(i) not in exclude for i in ids])
+    is_log = np.array([is_log_source(snap.source.get(i, "")) for i in ids])
+    if log_penalty == float("inf"):
+        keep &= ~is_log
+    offset = np.where(is_log & keep, np.float32(min(log_penalty, 1e9)), np.float32(0))
     cache: dict[str, list[int]] = {}
 
     def retrieve(query: str, k: int) -> list[int]:
         if query not in cache:
             q = np.asarray(embed_query(query, model), dtype=np.float32)
             q /= np.linalg.norm(q) + 1e-12
-            sims = np.where(keep, mat @ q, -np.inf)
-            top = np.argpartition(-sims, 100)[:100]
-            cache[query] = [ids[j] for j in top[np.argsort(-sims[top])]]
+            sims = np.where(keep, mat @ q - offset, -np.inf)
+            depth = min(100, len(ids))
+            top = np.argpartition(-sims, depth - 1)[:depth]
+            cache[query] = [ids[j] for j in top[np.argsort(-sims[top])] if np.isfinite(sims[j])]
         return cache[query][:k]
 
     return retrieve
@@ -138,3 +169,17 @@ def hybrid_arm(*arms: Retriever, depth: int = 50, k_rrf: int = 60) -> Retriever:
         return rrf([arm(query, depth) for arm in arms], k=k_rrf, limit=k)
 
     return retrieve
+
+
+ARM_NAMES = ("production", "bm25", "vector", "vector-nolog", "vector-downlog", "hybrid")
+
+
+def build_arms(snap: Snapshot, bv, vectors_prefix: str | None = None) -> dict[str, Retriever]:
+    """Every arm by name; the vector-based ones only when vectors are given."""
+    arms = {"production": production_arm(snap, bv), "bm25": bm25_arm(snap, bv)}
+    if vectors_prefix:
+        arms["vector"] = vector_arm(snap, vectors_prefix)
+        arms["vector-nolog"] = vector_arm(snap, vectors_prefix, log_penalty=float("inf"))
+        arms["vector-downlog"] = vector_arm(snap, vectors_prefix, log_penalty=LOG_PENALTY)
+        arms["hybrid"] = hybrid_arm(arms["bm25"], arms["vector"])
+    return arms

@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from retrieval_arms import Snapshot, bm25_arm, hybrid_arm, production_arm, vector_arm
+from retrieval_arms import Snapshot, build_arms
 from retrieval_metrics import (bootstrap_ci, hit_at_k, paired_bootstrap_diff, recall_at_k,
                                reciprocal_rank)
 
@@ -78,9 +78,7 @@ def main() -> None:
     from eval_system import DEFAULT_BV_DIR, load_brain_voice
     bv = load_brain_voice(args.brain_voice_dir or DEFAULT_BV_DIR)
     snap = Snapshot(args.db)
-    arms = {"production": production_arm(snap, bv), "bm25": bm25_arm(snap, bv),
-            "vector": vector_arm(snap, args.vectors)}
-    arms["hybrid"] = hybrid_arm(arms["bm25"], arms["vector"])
+    arms = build_arms(snap, bv, args.vectors)
 
     with open(args.questions, encoding="utf-8") as f:
         questions = {q["id"]: q["question"] for q in map(json.loads, f)}

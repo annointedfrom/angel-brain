@@ -136,6 +136,48 @@ Yes. Setup: the deployed v2 cortex on all 121 questions, 3 runs at t=0.7. `eval_
 
 **Decision:** vector retrieval is the better default on quality. Before switching brain_voice over, (1) measure a smaller embedder, (2) add the retrieval-confidence floor for false premises, and (3) filter log sources. Then re-run this eval.
 
+### Filtering log sources (2026-11-01)
+
+About 85% of the snapshot comes from automated feeds: SocialHub, Spector, post-analysis, Terminal Monitor and brain-intelligence (`retrieval_arms.is_log_source`). Two arms were fixed **before any scoring** and were not swept, because 87 labeled queries are too few to tune on:
+
+- `vector-nolog` drops the log sources.
+- `vector-downlog` subtracts a fixed 0.05 from their cosine score.
+
+Both new arms were added to the label pool and re-judged before scoring. That was 179 new judgments, so neither arm is penalized for surfacing memories nobody had labeled yet. Labels then exist for 89 of the 91 questions (previously 87).
+
+**Retrieval:**
+
+| Arm | hit@5 | MRR@10 | Δ hit@5 vs vector |
+|---|---|---|---|
+| vector | 0.92 | 0.79 | — |
+| **vector-nolog** | **0.97** | **0.85** | **+0.045 (+0.011, +0.090), no question lost** |
+| vector-downlog | 0.96 | 0.81 | +0.034 (+0.000, +0.079) |
+
+On the 12 category-1 retrieval misses, hit@5 goes from 0.67 to 0.92. Excluding logs costs nothing measurable, even on the 12 questions where some relevant memories are log rows. Those questions always had curated copies of the same facts.
+
+**System eval** (same v2 cortex, 3 runs at t=0.7, `--retriever vector-nolog`):
+
+| Domain | vector | vector-nolog | Δ vs vector (paired 95% CI) |
+|---|---|---|---|
+| **overall** | 75% | **80%** | +5.0 (−0.3, +10.2), n.s. |
+| workflow | 71% | 87% | **+15.9 (+3.2, +31.7), significant** |
+| identity | 70% | 81% | +11.1 (n.s.) |
+| coding | 84% | 90% | **+5.8 (+1.4, +11.6), significant** |
+| faith | 87% | 90% | +2.6 (n.s.) |
+| adversarial | 65% | 67% | +2.0 (n.s.) |
+| general | 59% | 44% | −15.4 (n.s., runs 23–62%) |
+
+- **Against production keyword recall: 68% → 80%, +11.6 (+5.0, +18.7), significant.**
+- **Always-failing questions drop from 20 to 13.** Fixed: id-1, id-11, id-12 (Gumroad), wf-3, wf-21, coding-21, faith-14, faith-21, adv-12 and adv-17. Newly failing: adv-2, adv-14 and gen-8.
+- **General knowledge regresses, and the mechanism is clear.** These questions have no personal answer. With logs gone, the nearest memory is a curated personal note, and the cortex over-applies it. For example, "race condition" gets explained through the vault's safety rules. Plain vector used to return an on-topic TikTok log instead. This is the same failure as the adversarial slip: the cortex trusts any memory it's given. The confidence floor is the fix for both, not the source list.
+- **Still failing:** id-10 (current focus) and wf-16 (START-HERE) have no relevant memory in any arm's top 10, and no arm gets id-13 (Roblox game name) into its top 5.
+- **New noise sources, found after the list was fixed** (candidates for the next pass, not applied here):
+  - `dashboard`: raw search-box strings such as "observe terminal" and "roblox".
+  - `voice`: brain_voice's own generated answers being recalled again.
+  - `benchmark`: test rows such as "Pi squared is 9.8696".
+
+**Decision:** `vector-nolog` replaces `vector` as the candidate for live recall. The overall gain over vector isn't significant on its own. But it is significant on retrieval, on coding and workflow, and against production, and it loses no retrieval question.
+
 ## Caveats
 
 - Scoring is regex-based, and grader agreement with human labels hasn't been measured yet. That's the next step: `calibrate_judge.py sample`, then hand-label 50 answers.

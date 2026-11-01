@@ -100,3 +100,33 @@ def test_eval_system_live_recall_is_brain_voice(tmp_path):
     bv = _fake_bv()
     bv.recall = lambda q, k: ["live"]
     assert make_recall(bv, "live") is bv.recall
+
+
+def test_log_sources_are_the_automated_feeds():
+    from retrieval_arms import is_log_source
+    assert all(is_log_source(s) for s in ("socialhub", "socialhub-live", "spector", "post-analysis"))
+    assert not any(is_log_source(s) for s in ("vault-rules", "angel-gold", "claude", "faith"))
+
+
+def test_vector_arm_drops_or_downweights_log_sources(tmp_path, monkeypatch):
+    np = __import__("pytest").importorskip("numpy")
+    import json
+    import retrieval_arms
+    snap = _snapshot(tmp_path, [("scanner log", "spector", "active"),
+                                ("the fact", "vault-rules", "active"),
+                                ("off topic", "vault-rules", "active")])
+    prefix = str(tmp_path / "vec")
+    # Query points along x; the log memory is the closest match, the fact a near second.
+    mat = np.array([[1.0, 0.0], [0.98, 0.199], [0.0, 1.0]], dtype=np.float32)
+    np.save(prefix + ".npy", mat)
+    with open(prefix + ".ids.json", "w", encoding="utf-8") as f:
+        json.dump([1, 2, 3], f)
+    monkeypatch.setattr(retrieval_arms, "embed_query", lambda text, model: (1.0, 0.0))
+    retrieval_arms._load_vectors.cache_clear()
+
+    def top(**kw):
+        return retrieval_arms.vector_arm(snap, prefix, **kw)("q", 3)
+
+    assert top() == [1, 2, 3]
+    assert top(log_penalty=0.05) == [2, 1, 3]
+    assert top(log_penalty=float("inf")) == [2, 3]

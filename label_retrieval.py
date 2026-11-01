@@ -23,7 +23,7 @@ import re
 import sys
 import urllib.request
 
-from retrieval_arms import Snapshot, bm25_arm, hybrid_arm, production_arm, vector_arm
+from retrieval_arms import Snapshot, build_arms
 
 DOMAINS = ("faith", "coding", "identity", "workflow")
 OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
@@ -95,10 +95,7 @@ def main() -> None:
     from eval_system import DEFAULT_BV_DIR, load_brain_voice
     bv = load_brain_voice(args.brain_voice_dir or DEFAULT_BV_DIR)
     snap = Snapshot(args.db)
-    arms = {"production": production_arm(snap, bv), "bm25": bm25_arm(snap, bv)}
-    if args.vectors:
-        arms["vector"] = vector_arm(snap, args.vectors)
-        arms["hybrid"] = hybrid_arm(arms["bm25"], arms["vector"])
+    arms = build_arms(snap, bv, args.vectors)
 
     with open(args.questions, encoding="utf-8") as f:
         questions = [q for q in map(json.loads, f) if q["domain"] in DOMAINS]
