@@ -30,7 +30,7 @@ CODE_FILES = [
     "grounding.py", "build_grounded_dataset.py", "quantize_gguf.sh", "prompts/voice_v2_abstain.txt",
     "embed_corpus.py", "retrieval_metrics.py", "retrieval_arms.py", "label_retrieval.py",
     "score_retrieval.py",
-    "calibrate_floor.py",
+    "calibrate_floor.py", "eval_paired.py",
     "tests/test_score_run.py", "tests/test_release.py", "tests/test_report.py", "tests/test_grounding.py",
     "tests/test_retrieval_metrics.py", "tests/test_retrieval_arms.py",
 ]

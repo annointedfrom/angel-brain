@@ -12,6 +12,7 @@ of them can be swapped into the serving path or eval_system.py.
   vector-nolog    vector with the automated log sources dropped
   vector-downlog  vector with log sources' cosine lowered by LOG_PENALTY
   vector-nolog-floor  vector-nolog without memories below MIN_SIM (may return none)
+  vector-nolog-gate   vector-nolog, but nothing at all if the top-1 is below MIN_SIM
   hybrid      reciprocal-rank fusion of bm25 and vector
 """
 from __future__ import annotations
@@ -140,9 +141,11 @@ def _load_vectors(prefix: str):
 
 def vector_arm(snap: Snapshot, vectors_prefix: str, model: str = "qwen3-embedding",
                exclude: frozenset[str] = frozenset({"brain_voice"}),
-               log_penalty: float = 0.0, min_sim: float | None = None) -> Retriever:
+               log_penalty: float = 0.0, min_sim: float | None = None,
+               gate: float | None = None) -> Retriever:
     """log_penalty is subtracted from the cosine of log-source memories; inf drops them.
     min_sim drops memories scoring below it, so a query may get fewer than k (or none).
+    gate is all-or-nothing: no memories if the top-1 scores below it, else the full top k.
     retrieve.scored(query, k) returns (id, score) pairs for calibration."""
     import numpy as np  # only the vector arm needs numpy
 
@@ -164,6 +167,8 @@ def vector_arm(snap: Snapshot, vectors_prefix: str, model: str = "qwen3-embeddin
             cache[query] = [(ids[j], float(sims[j])) for j in top[np.argsort(-sims[top])]
                             if np.isfinite(sims[j])]
         hits = cache[query]
+        if gate is not None and (not hits or hits[0][1] < gate):
+            return []
         if min_sim is not None:
             hits = [h for h in hits if h[1] >= min_sim]
         return hits[:k]
@@ -188,7 +193,7 @@ def hybrid_arm(*arms: Retriever, depth: int = 50, k_rrf: int = 60) -> Retriever:
 MIN_SIM = 0.508
 
 ARM_NAMES = ("production", "bm25", "vector", "vector-nolog", "vector-downlog",
-             "vector-nolog-floor", "hybrid")
+             "vector-nolog-floor", "vector-nolog-gate", "hybrid")
 
 
 def build_arms(snap: Snapshot, bv, vectors_prefix: str | None = None) -> dict[str, Retriever]:
@@ -200,5 +205,7 @@ def build_arms(snap: Snapshot, bv, vectors_prefix: str | None = None) -> dict[st
         arms["vector-downlog"] = vector_arm(snap, vectors_prefix, log_penalty=LOG_PENALTY)
         arms["vector-nolog-floor"] = vector_arm(snap, vectors_prefix, log_penalty=float("inf"),
                                                 min_sim=MIN_SIM)
+        arms["vector-nolog-gate"] = vector_arm(snap, vectors_prefix, log_penalty=float("inf"),
+                                               gate=MIN_SIM)
         arms["hybrid"] = hybrid_arm(arms["bm25"], arms["vector"])
     return arms

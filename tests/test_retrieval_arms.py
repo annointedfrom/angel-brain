@@ -152,7 +152,26 @@ def test_floor_returns_a_prefix_of_the_unfloored_ranking(tmp_path, monkeypatch):
     assert retrieval_arms.vector_arm(snap, prefix, min_sim=1.5)("q", 3) == []
     assert [round(s, 2) for _, s in floored.scored("q", 3)] == [1.0, 0.6]
 
+    # The gate keeps every memory, weak ones included, once the top-1 clears it.
+    assert retrieval_arms.vector_arm(snap, prefix, gate=0.9)("q", 3) == full == [1, 2, 3]
+    assert retrieval_arms.vector_arm(snap, prefix, gate=1.5)("q", 3) == []
+
 
 def test_pick_floor_is_second_lowest():
     from calibrate_floor import pick_floor
     assert pick_floor([0.7, 0.5, 0.6, 0.9]) == 0.6
+
+
+def test_group_by_recall_shares_identical_prompts():
+    from eval_paired import group_by_recall
+    groups = group_by_recall({"a": ["m1", "m2"], "b": ["m1", "m2"], "c": []})
+    assert sorted(sorted(arms) for arms in groups.values()) == [["a", "b"], ["c"]]
+
+
+def test_paired_stats_counts_unsampled_questions_as_ties():
+    from eval_paired import paired_stats
+    a = {"q1": 0.0, "q2": 1.0}
+    b = {"q1": 1.0, "q2": 1.0}
+    stats = paired_stats(a, b, total_questions=4, iters=200, seed=1)
+    assert stats["diff"] == 25.0  # one full win over four questions; q3 and q4 tie
+    assert stats["wins"] == ["q1"] and stats["losses"] == []

@@ -75,6 +75,7 @@ The harness is the main artifact. Three independent gates:
 |---|---|
 | `eval_system.py --tag all --runs 3 --temperature 0.7` | Repeated runs at the production temperature. Each answer records recalled memories and latency for error analysis. |
 | `report.py` | Mean pass rate, run spread, and a 95% bootstrap CI that resamples questions. With `--compare`, a paired B−A difference with its own CI. |
+| `eval_paired.py --arms A B C` | Compares retrievers with the noise designed out: one embedding per query, shared samples for identical recall, and only questions whose recall differs get sampled. Separate batches, even at t=0, showed false differences. |
 | `calibrate_judge.py sample / score` | Builds a human-labeling sheet, then measures agreement (Cohen's kappa) between your labels and both the regex gate and the council jury (`council_judge.py --per-item`). A grader is trusted for gating only at kappa ≥ 0.6. |
 
 ### Results
@@ -124,7 +125,7 @@ There are 87 answerable personal questions, scored against silver relevance labe
 | **vector (qwen3-embedding)** | **0.94** | **0.81** | **+0.24 (+0.14, +0.34)** |
 | hybrid (RRF) | 0.89 | 0.73 | +0.18 (+0.08, +0.29) |
 
-The vector lead holds on the 75 questions with discriminating answer specs. **It carries through to answers:** with the same v2 cortex, swapping in vector retrieval lifts the full 121-question system eval from **68% to 75% (+6.6, significant)**. Identity gains +24 and always-failing questions drop from 28 to 20; adversarial slips 6 pts (n.s.). **Dropping the automated log sources** (about 85% of memories, a list fixed before scoring) raises hit@5 to 0.97 (+0.045 over vector, significant) and the system eval to **80%**, which is +11.6 over keyword recall. Workflow and coding gain significantly over plain vector; general knowledge slips because the cortex over-applies whatever personal memory it gets. A **retrieval-confidence floor** (cosine 0.508, calibrated on a separate 50-question set) recovers general knowledge (+23, significant) but drops two personal facts; overall −1.1 (n.s.), so it is not shipped as-is. The catch is cost: a query embedding takes about 2.1 s and 4.8 GB of VRAM on the same GPU as the cortex. Details, the all-arm misses and the caveats are in [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md#retrieval-ab-a3-2026-10-31).
+The vector lead holds on the 75 questions with discriminating answer specs. **It carries through to answers:** with the same v2 cortex, swapping in vector retrieval lifts the full 121-question system eval from **68% to 75% (+6.6, significant)**. Identity gains +24 and always-failing questions drop from 28 to 20; adversarial slips 6 pts (n.s.). **Dropping the automated log sources** (about 85% of memories, a list fixed before scoring) raises hit@5 to 0.97 (+0.045 over vector, significant) and the system eval to **80%**, which is +11.6 over keyword recall. Workflow and coding gain significantly over plain vector; general knowledge slips because the cortex over-applies whatever personal memory it gets. A **retrieval-confidence floor** (cosine 0.508, calibrated on a separate 50-question set) recovers general knowledge (+23, significant) but drops two personal facts; overall −1.1 (n.s.), so it is not shipped as-is. An **all-or-nothing gate** at the same cosine gains +1.5 (−0.2, +3.5) in a paired run: no personal question changes and general knowledge gains about 15 points, but the CI misses the bar fixed in advance, so it isn't shipped either. The catch is cost: a query embedding takes about 2.1 s and 4.8 GB of VRAM on the same GPU as the cortex. Details, the all-arm misses and the caveats are in [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md#retrieval-ab-a3-2026-10-31).
 
 ### Honest caveats
 
@@ -152,7 +153,7 @@ Tests (CPU only, stdlib + pytest): `python -m pytest tests`
 
 - Hand-label 50 answers and publish grader agreement (kappa) for the regex gate and the jury.
 - Teach abstention ("the memories don't cover that"), then DPO with the fabricated answers as the rejected side.
-- ~~Retrieval metrics and a keyword vs vector vs hybrid comparison~~ (done). System eval with vector recall: 68% to 75%, then 80% with log sources filtered. A retrieval-confidence floor, calibrated off-eval (cosine 0.508), fixes general knowledge (+23, significant) but costs two personal facts, for a net change within noise. Next: the floor as an all-or-nothing gate, then a smaller embedder, then switch live recall.
+- ~~Retrieval metrics and a keyword vs vector vs hybrid comparison~~ (done). System eval with vector recall: 68% to 75%, then 80% with log sources filtered. A retrieval-confidence floor, calibrated off-eval (cosine 0.508), fixes general knowledge (+23, significant) but costs two personal facts, for a net change within noise. An all-or-nothing gate at the same cosine gets +1.5 (−0.2, +3.5), just short of its pre-set bar. Next: a smaller embedder, then switch live recall to `vector-nolog`.
 - Experiment tracking, a larger voice dataset (300–500 items), and a DPO pass on real failure pairs.
 - CI, tracing on the serving path, and a quantization quality-vs-speed table.
 

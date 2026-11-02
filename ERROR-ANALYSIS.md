@@ -210,16 +210,44 @@ That gives **MIN_SIM = 0.508**, which empties recall for 23 of the 25 general qu
 - **\*Half of the coding drop is sampling noise.** 83 of the 121 questions got *identical* memories in both arms, and they still moved −2.2 points overall, coding −1.0 question-equivalents of that. That is the noise between two independent 3-run batches.
 - **The floor's own effect,** on the 38 questions whose recall changed, is +1.1 points:
   - General knowledge gains +2.7 question-equivalents. Plain "17×23" or "capital of Indiana" questions stop being bent toward vault notes.
-  - **coding-8** ("do I change a user record in place?") loses its immutability rule: the question shares no vocabulary with "prefer new objects over mutating", and the cosine falls below 0.508.
+  - **coding-8** ("do I change a user record in place?") loses its immutability rule: the question shares no vocabulary with "prefer new objects over mutating", and the cosine falls below 0.508. *Correction: this was not a real loss. In the paired run below it passes 5/5 with no memories at all.*
   - **id-1** ("Who am I, and what am I building?") is cut to 1 memory and loses the project list.
 - **Adversarial stays flat, as predicted.** False premises about real projects retrieve on-topic memories that clear any relevance floor. The floor fixes the general-knowledge slip, not the false-premise one. That one needs abstention training or a premise check.
 
-**Decision:** don't ship the per-memory floor. It trades two answerable facts for the general-knowledge gain, for a net effect within noise. The next variant to test keeps the same frozen 0.508 and makes it a **gate**: if the top-1 cosine is below 0.508, recall nothing; otherwise pass the full top 5. That keeps id-1's supporting memories. It's a design change made after seeing this result, so it should be labeled that way when reported. Measurement fix needed first: run comparisons at temperature 0, or with 5+ runs, because 3-run batches carry about ±2 points of pure sampling noise.
+**Decision:** don't ship the per-memory floor. It trades two answerable facts for the general-knowledge gain, for a net effect within noise. The next variant to test keeps the same frozen 0.508 and makes it a **gate**: if the top-1 cosine is below 0.508, recall nothing; otherwise pass the full top 5. That keeps id-1's supporting memories. It's a design change made after seeing this result, so it should be labeled that way when reported.
+
+### All-or-nothing gate (2026-11-01)
+
+`vector-nolog-gate` uses the same frozen 0.508, but on the top-1 only: below it, recall nothing; otherwise pass the full top 5. The design came after seeing the floor's losses, so this is a post-hoc variant. Predictions and the ship rule were written down before it was scored.
+
+**The first protocol failed.** The floor write-up proposed temperature 0 to remove noise. Three separate t=0 runs showed it doesn't:
+
+- 8 of 105 byte-identical prompts got different answers. The prompt holds nothing time-dependent, so that's Ollama itself.
+- Query embeddings drift about 5e-4 in cosine between calls, which reorders near-ties. Four questions the gate can't touch still got different recall across processes.
+- The raw result, gate +4.1 (+0.8, +8.3) "significant", was inflated: two of its five wins (faith-19, gen-5) were on identical prompts. The floor went from −1.1 at t=0.7 to +5.8 at t=0, a sign flip from noise alone.
+
+**The fix is `eval_paired.py`.** All arms run in one process on one embedding per query. Arms that recall the same memories share one set of samples. Questions with identical recall in every arm are exact ties and are never sampled. Only 38 of 121 questions differ; each distinct recall got 5 runs at t=0.7. No question's top-1 is close enough to 0.508 for drift to flip the gate (nearest: gen-1 at 0.504).
+
+| Comparison (121 questions) | Δ points (95% CI) | Moved questions |
+|---|---|---|
+| gate − nolog | +1.5 (−0.2, +3.5) | wins: gen-1, gen-3, gen-4, gen-10, gen-12, adv-13. losses: adv-14, gen-2 |
+| floor − nolog | +1.5 (−1.5, +4.5) | wins add coding-2, faith-21, gen-7. losses add id-1, id-16, faith-15 |
+| gate − floor | 0.0 (−2.1, +2.3) | gate keeps id-1 (5/5 vs 0/5). floor keeps coding-2 (5/5 vs 3/5) and faith-21 (5/5 vs 1/5) |
+
+- **Personal questions:** the gate changes no identity, workflow, faith or coding question, including the two it empties (faith-18 and coding-8 stay 5/5).
+- **General knowledge:** +2.0 question-equivalents of 13, about +15 points on that domain.
+- **Weak memories do hurt some answers.** coding-2 and faith-21 improve when low-scoring memories are dropped, and those gains repeated at t=0 and t=0.7. id-1 needs its low-scoring memories, and that loss also repeated. A single cosine cut can't serve both.
+- **adv-14 ("Who won the 2031 World Series?") shows the gate's risk.** With no memories, the cortex invents a winner ("The Houston Astros ... in seven games"). The vector-nolog passes are regex accidents ("the future is never realized"), so neither arm really handles this. Empty recall plus "answer from general knowledge" invites fabrication on unknowable questions.
+
+**Pre-registered outcomes.** Expected +2 to +3; got +1.5. The ship rule needed a CI excluding 0 and no personal-domain question losing 2+ of 5 runs. The second part holds, the first misses narrowly.
+
+**Decision:** the gate doesn't clear its bar, so `vector-nolog` stays the live-recall candidate. Floor and gate are indistinguishable overall, so the rule gives no reason to prefer the floor. Future arm comparisons use `eval_paired.py`, not separate batches or t=0.
 
 **Earlier decision:** `vector-nolog` replaces `vector` as the candidate for live recall. The overall gain over vector isn't significant on its own. But it is significant on retrieval, on coding and workflow, and against production, and it loses no retrieval question.
 
 ## Caveats
 
 - Scoring is regex-based, and grader agreement with human labels hasn't been measured yet. That's the next step: `calibrate_judge.py sample`, then hand-label 50 answers.
-- All runs share one recall result per question (recall is deterministic). The variance shown is cortex sampling only.
+- Within one `eval_system.py` process, all runs share one recall result per question, so the variance shown is cortex sampling only. Recall can differ between processes because query embeddings aren't bit-stable.
+- Temperature 0 is not repeatable on this stack (8 of 105 identical prompts answered differently), so "greedy" columns are one sample, not a fixed value.
 - `report.py --compare` resamples questions, not runs. Two independent 3-run batches over identical memories still differ by about 2 points (measured on 83 unchanged questions in the floor A/B), so a borderline "significant" domain delta between separate batches can be partly sampling noise.
