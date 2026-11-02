@@ -59,7 +59,8 @@ def load_questions(path: str, tag: str) -> list[dict]:
     return qs
 
 
-RETRIEVERS = ("live", "production", "bm25", "vector", "vector-nolog", "vector-downlog", "hybrid")
+RETRIEVERS = ("live", "production", "bm25", "vector", "vector-nolog", "vector-downlog",
+              "vector-nolog-floor", "hybrid")
 
 
 def make_recall(bv, retriever: str, db: str | None = None, vectors: str | None = None):

@@ -130,3 +130,29 @@ def test_vector_arm_drops_or_downweights_log_sources(tmp_path, monkeypatch):
     assert top() == [1, 2, 3]
     assert top(log_penalty=0.05) == [2, 1, 3]
     assert top(log_penalty=float("inf")) == [2, 3]
+
+
+def test_floor_returns_a_prefix_of_the_unfloored_ranking(tmp_path, monkeypatch):
+    np = __import__("pytest").importorskip("numpy")
+    import json
+    import retrieval_arms
+    snap = _snapshot(tmp_path, [("strong", "vault-rules", "active"),
+                                ("weak", "vault-rules", "active"),
+                                ("weaker", "vault-rules", "active")])
+    prefix = str(tmp_path / "vec")
+    np.save(prefix + ".npy", np.array([[1.0, 0.0], [0.6, 0.8], [0.3, 0.954]], dtype=np.float32))
+    with open(prefix + ".ids.json", "w", encoding="utf-8") as f:
+        json.dump([1, 2, 3], f)
+    monkeypatch.setattr(retrieval_arms, "embed_query", lambda text, model: (1.0, 0.0))
+    retrieval_arms._load_vectors.cache_clear()
+
+    full = retrieval_arms.vector_arm(snap, prefix)("q", 3)
+    floored = retrieval_arms.vector_arm(snap, prefix, min_sim=0.5)
+    assert floored("q", 3) == full[:2] == [1, 2]
+    assert retrieval_arms.vector_arm(snap, prefix, min_sim=1.5)("q", 3) == []
+    assert [round(s, 2) for _, s in floored.scored("q", 3)] == [1.0, 0.6]
+
+
+def test_pick_floor_is_second_lowest():
+    from calibrate_floor import pick_floor
+    assert pick_floor([0.7, 0.5, 0.6, 0.9]) == 0.6

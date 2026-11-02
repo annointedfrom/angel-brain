@@ -176,9 +176,50 @@ On the 12 category-1 retrieval misses, hit@5 goes from 0.67 to 0.92. Excluding l
   - `voice`: brain_voice's own generated answers being recalled again.
   - `benchmark`: test rows such as "Pi squared is 9.8696".
 
-**Decision:** `vector-nolog` replaces `vector` as the candidate for live recall. The overall gain over vector isn't significant on its own. But it is significant on retrieval, on coding and workflow, and against production, and it loses no retrieval question.
+### Retrieval-confidence floor (2026-11-01)
+
+`vector-nolog-floor` drops any recalled memory with a cosine below `MIN_SIM`. If nothing clears the floor, the cortex gets "(no relevant memories found)" and answers from general knowledge.
+
+**Calibration.** The threshold was set without touching the eval (`calibrate_floor.py`), using a private set of 50 questions. Every one has Jaccard < 0.5 to every eval question:
+
+- 25 personal questions whose facts were confirmed in the snapshot, each with an answer regex.
+- 25 general-knowledge questions.
+
+The rule was fixed before any scores were read: the floor is the 2nd-lowest cosine of a relevant memory.
+
+| Calibration set | Cosine range |
+|---|---|
+| Best relevant memory, answerable questions | 0.506–0.834 |
+| Top-1 hit, general questions | 0.239–0.563 |
+
+That gives **MIN_SIM = 0.508**, which empties recall for 23 of the 25 general questions. One global floor does separate the two sets with this embedder.
+
+**System eval** (vs `vector-nolog`, same cortex, 3 runs at t=0.7):
+
+| Domain | vector-nolog | + floor | Δ (paired 95% CI) |
+|---|---|---|---|
+| overall | 80% | 78% | −1.1 (−5.8, +3.3), n.s. |
+| general | 44% | 67% | **+23.1 (+2.6, +41.0), significant** |
+| faith | 90% | 94% | +3.8 (n.s.) |
+| adversarial | 67% | 63% | −3.9 (n.s.) |
+| workflow | 87% | 82% | −4.8 (n.s.) |
+| identity | 81% | 73% | −7.9 (n.s.) |
+| coding | 90% | 81% | −8.7 (−18.8, −1.4), significant* |
+
+- **On the eval, recall goes empty for** 8 of 13 general, 2 of 17 adversarial, and 2 answerable questions (coding-8 and faith-18). Over-refusal stays at 0%.
+- **\*Half of the coding drop is sampling noise.** 83 of the 121 questions got *identical* memories in both arms, and they still moved −2.2 points overall, coding −1.0 question-equivalents of that. That is the noise between two independent 3-run batches.
+- **The floor's own effect,** on the 38 questions whose recall changed, is +1.1 points:
+  - General knowledge gains +2.7 question-equivalents. Plain "17×23" or "capital of Indiana" questions stop being bent toward vault notes.
+  - **coding-8** ("do I change a user record in place?") loses its immutability rule: the question shares no vocabulary with "prefer new objects over mutating", and the cosine falls below 0.508.
+  - **id-1** ("Who am I, and what am I building?") is cut to 1 memory and loses the project list.
+- **Adversarial stays flat, as predicted.** False premises about real projects retrieve on-topic memories that clear any relevance floor. The floor fixes the general-knowledge slip, not the false-premise one. That one needs abstention training or a premise check.
+
+**Decision:** don't ship the per-memory floor. It trades two answerable facts for the general-knowledge gain, for a net effect within noise. The next variant to test keeps the same frozen 0.508 and makes it a **gate**: if the top-1 cosine is below 0.508, recall nothing; otherwise pass the full top 5. That keeps id-1's supporting memories. It's a design change made after seeing this result, so it should be labeled that way when reported. Measurement fix needed first: run comparisons at temperature 0, or with 5+ runs, because 3-run batches carry about ±2 points of pure sampling noise.
+
+**Earlier decision:** `vector-nolog` replaces `vector` as the candidate for live recall. The overall gain over vector isn't significant on its own. But it is significant on retrieval, on coding and workflow, and against production, and it loses no retrieval question.
 
 ## Caveats
 
 - Scoring is regex-based, and grader agreement with human labels hasn't been measured yet. That's the next step: `calibrate_judge.py sample`, then hand-label 50 answers.
 - All runs share one recall result per question (recall is deterministic). The variance shown is cortex sampling only.
+- `report.py --compare` resamples questions, not runs. Two independent 3-run batches over identical memories still differ by about 2 points (measured on 83 unchanged questions in the floor A/B), so a borderline "significant" domain delta between separate batches can be partly sampling noise.

@@ -124,7 +124,7 @@ There are 87 answerable personal questions, scored against silver relevance labe
 | **vector (qwen3-embedding)** | **0.94** | **0.81** | **+0.24 (+0.14, +0.34)** |
 | hybrid (RRF) | 0.89 | 0.73 | +0.18 (+0.08, +0.29) |
 
-The vector lead holds on the 75 questions with discriminating answer specs. **It carries through to answers:** with the same v2 cortex, swapping in vector retrieval lifts the full 121-question system eval from **68% to 75% (+6.6, significant)**. Identity gains +24 and always-failing questions drop from 28 to 20; adversarial slips 6 pts (n.s.). **Dropping the automated log sources** (about 85% of memories, a list fixed before scoring) raises hit@5 to 0.97 (+0.045 over vector, significant) and the system eval to **80%**, which is +11.6 over keyword recall. Workflow and coding gain significantly over plain vector; general knowledge slips because the cortex over-applies whatever personal memory it gets. The catch is cost: a query embedding takes about 2.1 s and 4.8 GB of VRAM on the same GPU as the cortex. Details, the all-arm misses and the caveats are in [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md#retrieval-ab-a3-2026-10-31).
+The vector lead holds on the 75 questions with discriminating answer specs. **It carries through to answers:** with the same v2 cortex, swapping in vector retrieval lifts the full 121-question system eval from **68% to 75% (+6.6, significant)**. Identity gains +24 and always-failing questions drop from 28 to 20; adversarial slips 6 pts (n.s.). **Dropping the automated log sources** (about 85% of memories, a list fixed before scoring) raises hit@5 to 0.97 (+0.045 over vector, significant) and the system eval to **80%**, which is +11.6 over keyword recall. Workflow and coding gain significantly over plain vector; general knowledge slips because the cortex over-applies whatever personal memory it gets. A **retrieval-confidence floor** (cosine 0.508, calibrated on a separate 50-question set) recovers general knowledge (+23, significant) but drops two personal facts; overall −1.1 (n.s.), so it is not shipped as-is. The catch is cost: a query embedding takes about 2.1 s and 4.8 GB of VRAM on the same GPU as the cortex. Details, the all-arm misses and the caveats are in [ERROR-ANALYSIS.md](ERROR-ANALYSIS.md#retrieval-ab-a3-2026-10-31).
 
 ### Honest caveats
 
@@ -152,7 +152,7 @@ Tests (CPU only, stdlib + pytest): `python -m pytest tests`
 
 - Hand-label 50 answers and publish grader agreement (kappa) for the regex gate and the jury.
 - Teach abstention ("the memories don't cover that"), then DPO with the fabricated answers as the rejected side.
-- ~~Retrieval metrics and a keyword vs vector vs hybrid comparison~~ (done). System eval with vector recall: 68% to 75%, then 80% with log sources filtered. Next: a retrieval-confidence floor (fixes both the false-premise and general-knowledge slips), a smaller embedder, then switch live recall.
+- ~~Retrieval metrics and a keyword vs vector vs hybrid comparison~~ (done). System eval with vector recall: 68% to 75%, then 80% with log sources filtered. A retrieval-confidence floor, calibrated off-eval (cosine 0.508), fixes general knowledge (+23, significant) but costs two personal facts, for a net change within noise. Next: the floor as an all-or-nothing gate, then a smaller embedder, then switch live recall.
 - Experiment tracking, a larger voice dataset (300–500 items), and a DPO pass on real failure pairs.
 - CI, tracing on the serving path, and a quantization quality-vs-speed table.
 

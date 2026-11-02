@@ -11,6 +11,7 @@ of them can be swapped into the serving path or eval_system.py.
   vector      cosine similarity over Ollama embeddings (embed_corpus.py)
   vector-nolog    vector with the automated log sources dropped
   vector-downlog  vector with log sources' cosine lowered by LOG_PENALTY
+  vector-nolog-floor  vector-nolog without memories below MIN_SIM (may return none)
   hybrid      reciprocal-rank fusion of bm25 and vector
 """
 from __future__ import annotations
@@ -139,8 +140,10 @@ def _load_vectors(prefix: str):
 
 def vector_arm(snap: Snapshot, vectors_prefix: str, model: str = "qwen3-embedding",
                exclude: frozenset[str] = frozenset({"brain_voice"}),
-               log_penalty: float = 0.0) -> Retriever:
-    """log_penalty is subtracted from the cosine of log-source memories; inf drops them."""
+               log_penalty: float = 0.0, min_sim: float | None = None) -> Retriever:
+    """log_penalty is subtracted from the cosine of log-source memories; inf drops them.
+    min_sim drops memories scoring below it, so a query may get fewer than k (or none).
+    retrieve.scored(query, k) returns (id, score) pairs for calibration."""
     import numpy as np  # only the vector arm needs numpy
 
     mat, ids = _load_vectors(vectors_prefix)
@@ -149,18 +152,26 @@ def vector_arm(snap: Snapshot, vectors_prefix: str, model: str = "qwen3-embeddin
     if log_penalty == float("inf"):
         keep &= ~is_log
     offset = np.where(is_log & keep, np.float32(min(log_penalty, 1e9)), np.float32(0))
-    cache: dict[str, list[int]] = {}
+    cache: dict[str, list[tuple[int, float]]] = {}
 
-    def retrieve(query: str, k: int) -> list[int]:
+    def scored(query: str, k: int) -> list[tuple[int, float]]:
         if query not in cache:
             q = np.asarray(embed_query(query, model), dtype=np.float32)
             q /= np.linalg.norm(q) + 1e-12
             sims = np.where(keep, mat @ q - offset, -np.inf)
             depth = min(100, len(ids))
             top = np.argpartition(-sims, depth - 1)[:depth]
-            cache[query] = [ids[j] for j in top[np.argsort(-sims[top])] if np.isfinite(sims[j])]
-        return cache[query][:k]
+            cache[query] = [(ids[j], float(sims[j])) for j in top[np.argsort(-sims[top])]
+                            if np.isfinite(sims[j])]
+        hits = cache[query]
+        if min_sim is not None:
+            hits = [h for h in hits if h[1] >= min_sim]
+        return hits[:k]
 
+    def retrieve(query: str, k: int) -> list[int]:
+        return [i for i, _ in scored(query, k)]
+
+    retrieve.scored = scored
     return retrieve
 
 
@@ -171,7 +182,13 @@ def hybrid_arm(*arms: Retriever, depth: int = 50, k_rrf: int = 60) -> Retriever:
     return retrieve
 
 
-ARM_NAMES = ("production", "bm25", "vector", "vector-nolog", "vector-downlog", "hybrid")
+# From calibrate_floor.py on a private set kept apart from the eval: the 2nd-lowest
+# relevant-memory cosine. Specific to qwen3-embedding + QUERY_INSTRUCTION; recalibrate
+# for any other embedder or instruction.
+MIN_SIM = 0.508
+
+ARM_NAMES = ("production", "bm25", "vector", "vector-nolog", "vector-downlog",
+             "vector-nolog-floor", "hybrid")
 
 
 def build_arms(snap: Snapshot, bv, vectors_prefix: str | None = None) -> dict[str, Retriever]:
@@ -181,5 +198,7 @@ def build_arms(snap: Snapshot, bv, vectors_prefix: str | None = None) -> dict[st
         arms["vector"] = vector_arm(snap, vectors_prefix)
         arms["vector-nolog"] = vector_arm(snap, vectors_prefix, log_penalty=float("inf"))
         arms["vector-downlog"] = vector_arm(snap, vectors_prefix, log_penalty=LOG_PENALTY)
+        arms["vector-nolog-floor"] = vector_arm(snap, vectors_prefix, log_penalty=float("inf"),
+                                                min_sim=MIN_SIM)
         arms["hybrid"] = hybrid_arm(arms["bm25"], arms["vector"])
     return arms
