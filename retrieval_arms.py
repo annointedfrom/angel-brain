@@ -118,7 +118,7 @@ def embed_query(text: str, model: str, url: str = "http://localhost:11434") -> t
 
 
 _LOG_SOURCES = frozenset({"spector", "post-analysis", "terminal-monitor", "tiktok-enrich",
-                          "brain-intelligence", "brain-intelligence-digest"})
+                          "brain-intelligence", "brain-intelligence-digest", "robinhood-bridge"})
 
 # Fixed before scoring, not tuned on the eval: 87 labeled queries are too few to tune on.
 LOG_PENALTY = 0.05

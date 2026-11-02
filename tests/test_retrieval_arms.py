@@ -157,6 +157,21 @@ def test_floor_returns_a_prefix_of_the_unfloored_ranking(tmp_path, monkeypatch):
     assert retrieval_arms.vector_arm(snap, prefix, gate=1.5)("q", 3) == []
 
 
+def test_live_recall_matches_the_arm_the_eval_measured():
+    """Skips in the public release, which doesn't ship the live service."""
+    pytest = __import__("pytest")
+    from eval_system import DEFAULT_BV_DIR
+    import retrieval_arms
+    if not os.path.isfile(os.path.join(DEFAULT_BV_DIR, "vector_recall.py")):
+        pytest.skip("live service not present")
+    sys.path.insert(0, DEFAULT_BV_DIR)
+    import vector_recall
+    assert vector_recall.QUERY_INSTRUCTION == retrieval_arms.QUERY_INSTRUCTION
+    assert vector_recall.LOG_SOURCES == retrieval_arms._LOG_SOURCES
+    for source in ("socialhub-live", "spector", "faith", "vault-rules", "claude"):
+        assert vector_recall.is_indexable(source) != retrieval_arms.is_log_source(source)
+
+
 def test_pick_floor_is_second_lowest():
     from calibrate_floor import pick_floor
     assert pick_floor([0.7, 0.5, 0.6, 0.9]) == 0.6

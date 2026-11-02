@@ -245,6 +245,25 @@ That gives **MIN_SIM = 0.508**, which empties recall for 23 of the 25 general qu
 
 **Earlier decision:** `vector-nolog` replaces `vector` as the candidate for live recall. The overall gain over vector isn't significant on its own. But it is significant on retrieval, on coding and workflow, and against production, and it loses no retrieval question.
 
+### Live recall switched to vector-nolog (2026-11-01)
+
+`brain_voice.recall` now uses `vector_recall.py`, the `vector-nolog` design against the live knowledge DB, and falls back to keyword search with a visible note if vectors can't answer. The index holds only the 2,304 non-log memories (19 MB). A test in the private repo fails if its query instruction or log list drifts from `retrieval_arms.py`.
+
+Re-run through the real `recall` path (121 questions, 3 runs at t=0.7):
+
+| Setup | System eval | Reply time, p50 (worst) |
+|---|---|---|
+| Keyword recall | 68% | 7.1 s (8.9 s) |
+| Vector, embedder on GPU | 77% | 13.4 s (19.0 s) |
+| **Vector, query embedding on CPU (shipped)** | **80%** | **5.1 s (17.9 s)** |
+
+- **The GPU swap was the hidden cost.** Embedder (4.8 GB) and cortex (3.1 GB) don't fit together in 8 GB, so Ollama evicted one for the other on every reply. `eval_system.py` recalls everything before composing, so it never showed this. An alternating test did.
+- **CPU embedding fixes it** at 2.3 s per query, with the cortex staying loaded. Keyword recall was slower than expected at 4.3 s, since it makes up to 6 REST searches. The worst case is a cold start after the 5-minute keep-alive.
+- **Cost:** the embedder holds about 5 GB of system RAM while loaded.
+- **77% vs 80% is noise.** Against the snapshot arm the difference is +0.3 (−3.0, +3.9) on CPU. The keyword 68% is from an earlier batch on the snapshot, not a same-day paired run.
+- **CPU vectors differ slightly** from the GPU document vectors (query cosine 0.998), enough to change 20 of 121 recall sets. Any future cosine threshold must be recalibrated on CPU query vectors; 0.508 was set on GPU ones.
+- **The log list is a denylist,** so new automated feeds enter the index until they're added. `robinhood-bridge` was added this way.
+
 ## Caveats
 
 - Scoring is regex-based, and grader agreement with human labels hasn't been measured yet. That's the next step: `calibrate_judge.py sample`, then hand-label 50 answers.
